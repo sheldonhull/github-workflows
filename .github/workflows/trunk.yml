@@ -23,7 +23,7 @@ jobs:
       contents: read # For repo checkout
     steps:
       - name: checkout
-        uses: actions/checkout@c85c95e3d7251135ab7dc9ce3241c5835cc595a9 # v3
+        uses: actions/checkout@0ad4b8fadaa221de15dcec353f45205ec38ea70b # v4
       - name: set-aqua-policy-if-file-exists
         run: |
           if [ -f aqua-policy.yaml ]; then
@@ -31,7 +31,7 @@ jobs:
           else
             echo "👉 No aqua-policy.yaml file found, skipping setting AQUA_POLICY_CONFIG"
           fi
-      - uses: aquaproj/aqua-installer@36dc5833b04eb63f06e3bb818aa6b7a6e6db99a9 # v2.1.2
+      - uses: aquaproj/aqua-installer@6ce1f8848ec8e61f14d57bd5d7597057a6dd187c # v3.0.1
         continue-on-error: true
         with:
           aqua_version: v2.10.1
