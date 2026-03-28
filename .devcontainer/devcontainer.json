@@ -1,0 +1,31 @@
+{
+  "name": "github-workflows-agent",
+  "image": "mcr.microsoft.com/devcontainers/base:ubuntu",
+  "features": {
+    "ghcr.io/devcontainers/features/go:1": {
+      "version": "latest"
+    },
+    "ghcr.io/devcontainers/features/docker-in-docker:2": {},
+    "ghcr.io/devcontainers/features/github-cli:1": {}
+  },
+  "postCreateCommand": "bash .devcontainer/post-create.sh",
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "trunk.io",
+        "github.vscode-github-actions",
+        "redhat.vscode-yaml"
+      ]
+    },
+    "codespaces": {
+      "repositories": {
+        "sheldonhull/github-workflows": {
+          "permissions": {
+            "contents": "write",
+            "pull_requests": "write"
+          }
+        }
+      }
+    }
+  }
+}

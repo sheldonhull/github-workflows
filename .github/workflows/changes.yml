@@ -1,0 +1,59 @@
+---
+name: changes
+on:
+  workflow_call:
+    inputs:
+      filters:
+        description: >
+          YAML string of path filters. Each key becomes an output.
+          Example: "src: ['src/**'] docs: ['docs/**', '*.md']"
+        required: true
+        type: string
+    outputs:
+      changes:
+        description: JSON array of filter names that matched changed files
+        value: ${{ jobs.detect.outputs.changes }}
+      # Common pre-defined pattern outputs for convenience
+      src:
+        description: Whether source files changed
+        value: ${{ jobs.detect.outputs.src }}
+      docs:
+        description: Whether docs changed
+        value: ${{ jobs.detect.outputs.docs }}
+      ci:
+        description: Whether CI config changed
+        value: ${{ jobs.detect.outputs.ci }}
+      go:
+        description: Whether Go files changed
+        value: ${{ jobs.detect.outputs.go }}
+      docker:
+        description: Whether Docker files changed
+        value: ${{ jobs.detect.outputs.docker }}
+concurrency:
+  group: changes-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+permissions:
+  contents: read
+  pull-requests: read
+jobs:
+  detect:
+    name: detect-changes
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    outputs:
+      changes: ${{ steps.filter.outputs.changes }}
+      src: ${{ steps.filter.outputs.src }}
+      docs: ${{ steps.filter.outputs.docs }}
+      ci: ${{ steps.filter.outputs.ci }}
+      go: ${{ steps.filter.outputs.go }}
+      docker: ${{ steps.filter.outputs.docker }}
+    steps:
+      - name: checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
+        with:
+          fetch-depth: 1
+      - name: path-filter
+        uses: dorny/paths-filter@de90cc6fb38fc0963ad72b210f1f284cd68cea36 # v3
+        id: filter
+        with:
+          filters: ${{ inputs.filters }}

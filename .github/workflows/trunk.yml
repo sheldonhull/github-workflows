@@ -6,9 +6,9 @@ on:
       - main
   workflow_dispatch:
   workflow_call:
-# concurrency:
-#   group: ${{ github.workflow }}-${{ github.ref }}-${{ github.action }}
-#   cancel-in-progress: false
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 permissions:
   pull-requests: read
   contents: read
@@ -24,6 +24,8 @@ jobs:
     steps:
       - name: checkout
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
+        with:
+          fetch-depth: 1
       - name: set-aqua-policy-if-file-exists
         run: |
           if [ -f aqua-policy.yaml ]; then
@@ -31,16 +33,30 @@ jobs:
           else
             echo "👉 No aqua-policy.yaml file found, skipping setting AQUA_POLICY_CONFIG"
           fi
+      - name: cache-aqua
+        uses: actions/cache@5a3ec84eff668545956fd18022155c47e93e2684 # v4
+        with:
+          path: |
+            ~/.local/share/aquaproj-aqua
+          key: aqua-lint-${{ runner.os }}-${{ hashFiles('aqua.yaml', '.aqua.yaml', 'aqua/*.yaml') }}
+          restore-keys: |
+            aqua-lint-${{ runner.os }}-
       - uses: aquaproj/aqua-installer@5e54e5cee8a95ee2ce7c04cb993da6dfad13e59c # v3.1.2
         continue-on-error: true
         with:
           aqua_version: v2.53.3
           enable_aqua_install: true
-          aqua_opts: '--tags lint' # if using aqua.yaml config any special items in your repo like Golangci-lint using tags so it only installs what's needed
+          aqua_opts: '--tags lint'
         env:
           AQUA_LOG_LEVEL: debug
-          AQUA_OPTS: ''
       - name: trunk-check
         uses: trunk-io/trunk-action@75699af9e26881e564e9d832ef7dc3af25ec031b # v1.2.4
         with:
           arguments: --github-annotate-new-only=true
+      - name: summary
+        if: always()
+        run: |
+          echo "## Lint Results" >> "$GITHUB_STEP_SUMMARY"
+          echo "- **Workflow:** ${{ github.workflow }}" >> "$GITHUB_STEP_SUMMARY"
+          echo "- **Ref:** ${{ github.ref_name }}" >> "$GITHUB_STEP_SUMMARY"
+          echo "- **Trigger:** ${{ github.event_name }}" >> "$GITHUB_STEP_SUMMARY"

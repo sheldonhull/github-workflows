@@ -1,0 +1,85 @@
+---
+name: security-scan
+on:
+  workflow_call:
+    inputs:
+      scan-go-vulns:
+        description: Run govulncheck for Go vulnerability scanning
+        required: false
+        type: boolean
+        default: false
+      scan-secrets:
+        description: Run gitleaks secret detection
+        required: false
+        type: boolean
+        default: true
+      scan-dependencies:
+        description: Run dependency review (PR only)
+        required: false
+        type: boolean
+        default: true
+      go-version:
+        description: Go version for govulncheck
+        required: false
+        type: string
+        default: stable
+      timeout-minutes:
+        description: Job timeout in minutes
+        required: false
+        type: number
+        default: 5
+concurrency:
+  group: security-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+permissions:
+  contents: read
+  security-events: write
+jobs:
+  secrets:
+    name: secret-scan
+    if: inputs.scan-secrets
+    runs-on: ubuntu-latest
+    timeout-minutes: ${{ inputs.timeout-minutes }}
+    steps:
+      - name: checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
+        with:
+          fetch-depth: 0
+      - name: gitleaks
+        uses: gitleaks/gitleaks-action@ff98106e4c7b2bc287b24eaf42907196e88e9c30 # v2
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+  govulncheck:
+    name: go-vulncheck
+    if: inputs.scan-go-vulns
+    runs-on: ubuntu-latest
+    timeout-minutes: ${{ inputs.timeout-minutes }}
+    steps:
+      - name: checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
+        with:
+          fetch-depth: 1
+      - name: setup-go
+        uses: actions/setup-go@d35c59abb061a4a6fb18e82ac0862c26744d6ab5 # v5
+        with:
+          go-version: ${{ inputs.go-version }}
+          cache: true
+      - name: install-govulncheck
+        run: go install golang.org/x/vuln/cmd/govulncheck@latest
+      - name: govulncheck
+        run: govulncheck ./...
+  dependency-review:
+    name: dependency-review
+    if: inputs.scan-dependencies && github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: ${{ inputs.timeout-minutes }}
+    permissions:
+      contents: read
+      pull-requests: write
+    steps:
+      - name: checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
+        with:
+          fetch-depth: 1
+      - name: dependency-review
+        uses: actions/dependency-review-action@da24556b548a50705dd671f47852072ea4c105d9 # v4

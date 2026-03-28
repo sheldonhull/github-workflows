@@ -1,0 +1,53 @@
+---
+name: setup-aqua
+description: >
+  Composite action for checkout + aqua tool installation with caching.
+  Reduces boilerplate across reusable workflows.
+inputs:
+  aqua-version:
+    description: Aqua version to install
+    required: false
+    default: v2.53.3
+  aqua-opts:
+    description: Options passed to aqua install (e.g. --tags lint)
+    required: false
+    default: ''
+  fetch-depth:
+    description: Git fetch depth (0 for full history)
+    required: false
+    default: '1'
+  checkout:
+    description: Whether to run checkout (set false if already checked out)
+    required: false
+    default: 'true'
+runs:
+  using: composite
+  steps:
+    - name: checkout
+      if: inputs.checkout == 'true'
+      uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
+      with:
+        fetch-depth: ${{ inputs.fetch-depth }}
+    - name: set-aqua-policy-if-file-exists
+      shell: bash
+      run: |
+        if [ -f aqua-policy.yaml ]; then
+          echo "AQUA_POLICY_CONFIG=${GITHUB_WORKSPACE}/aqua-policy.yaml:${AQUA_POLICY_CONFIG}" >> "$GITHUB_ENV"
+        fi
+    - name: cache-aqua
+      uses: actions/cache@5a3ec84eff668545956fd18022155c47e93e2684 # v4
+      with:
+        path: |
+          ~/.local/share/aquaproj-aqua
+        key: aqua-${{ runner.os }}-${{ hashFiles('aqua.yaml', '.aqua.yaml', 'aqua/*.yaml') }}
+        restore-keys: |
+          aqua-${{ runner.os }}-
+    - name: install-aqua
+      uses: aquaproj/aqua-installer@5e54e5cee8a95ee2ce7c04cb993da6dfad13e59c # v3.1.2
+      continue-on-error: true
+      with:
+        aqua_version: ${{ inputs.aqua-version }}
+        enable_aqua_install: true
+        aqua_opts: ${{ inputs.aqua-opts }}
+      env:
+        AQUA_LOG_LEVEL: debug

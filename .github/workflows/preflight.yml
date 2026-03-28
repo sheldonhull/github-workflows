@@ -1,0 +1,193 @@
+---
+name: preflight
+on:
+  workflow_call:
+    inputs:
+      path-filters:
+        description: >
+          YAML string of path filters for change detection.
+          Keys: src, docs, ci, go, docker (or custom).
+          Example: "src: ['src/**', '*.go'] docs: ['docs/**']"
+        required: true
+        type: string
+      skip-on-docs-only:
+        description: Skip all checks if only docs changed
+        required: false
+        type: boolean
+        default: true
+      run-lint:
+        description: Run trunk lint check
+        required: false
+        type: boolean
+        default: true
+      run-security:
+        description: Run secret scanning
+        required: false
+        type: boolean
+        default: true
+    outputs:
+      should-build:
+        description: Whether build jobs should run (source files changed)
+        value: ${{ jobs.gate.outputs.should_build }}
+      should-test:
+        description: Whether test jobs should run
+        value: ${{ jobs.gate.outputs.should_test }}
+      should-docker:
+        description: Whether docker jobs should run
+        value: ${{ jobs.gate.outputs.should_docker }}
+      changes-json:
+        description: JSON array of which filter groups matched
+        value: ${{ jobs.changes.outputs.changes }}
+concurrency:
+  group: preflight-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+permissions:
+  contents: read
+  pull-requests: read
+  checks: write
+jobs:
+  # Fast change detection - typically completes in <10s
+  changes:
+    name: detect-changes
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    outputs:
+      changes: ${{ steps.filter.outputs.changes }}
+      src: ${{ steps.filter.outputs.src }}
+      docs: ${{ steps.filter.outputs.docs }}
+      go: ${{ steps.filter.outputs.go }}
+      docker: ${{ steps.filter.outputs.docker }}
+      ci: ${{ steps.filter.outputs.ci }}
+    steps:
+      - name: checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
+        with:
+          fetch-depth: 1
+      - name: path-filter
+        uses: dorny/paths-filter@de90cc6fb38fc0963ad72b210f1f284cd68cea36 # v3
+        id: filter
+        with:
+          filters: ${{ inputs.path-filters }}
+
+  # Gate job - evaluates change detection results and decides what runs
+  gate:
+    name: gate
+    needs: [changes]
+    runs-on: ubuntu-latest
+    timeout-minutes: 1
+    outputs:
+      should_build: ${{ steps.decide.outputs.should_build }}
+      should_test: ${{ steps.decide.outputs.should_test }}
+      should_docker: ${{ steps.decide.outputs.should_docker }}
+      docs_only: ${{ steps.decide.outputs.docs_only }}
+    steps:
+      - name: evaluate-changes
+        id: decide
+        run: |
+          SRC="${{ needs.changes.outputs.src }}"
+          DOCS="${{ needs.changes.outputs.docs }}"
+          GO="${{ needs.changes.outputs.go }}"
+          DOCKER="${{ needs.changes.outputs.docker }}"
+          CI="${{ needs.changes.outputs.ci }}"
+
+          # Determine if only docs changed
+          DOCS_ONLY="false"
+          if [[ "${DOCS}" == "true" && "${SRC}" != "true" && "${GO}" != "true" && "${DOCKER}" != "true" && "${CI}" != "true" ]]; then
+            DOCS_ONLY="true"
+          fi
+
+          # Build should run if source, go, or CI files changed
+          SHOULD_BUILD="false"
+          if [[ "${SRC}" == "true" || "${GO}" == "true" || "${CI}" == "true" ]]; then
+            SHOULD_BUILD="true"
+          fi
+
+          # Test should run if source or go files changed
+          SHOULD_TEST="false"
+          if [[ "${SRC}" == "true" || "${GO}" == "true" ]]; then
+            SHOULD_TEST="true"
+          fi
+
+          # Docker should run if docker or source files changed
+          SHOULD_DOCKER="false"
+          if [[ "${DOCKER}" == "true" || "${SRC}" == "true" ]]; then
+            SHOULD_DOCKER="true"
+          fi
+
+          # If skip-on-docs-only and only docs changed, skip everything
+          if [[ "${{ inputs.skip-on-docs-only }}" == "true" && "${DOCS_ONLY}" == "true" ]]; then
+            SHOULD_BUILD="false"
+            SHOULD_TEST="false"
+            SHOULD_DOCKER="false"
+          fi
+
+          echo "should_build=${SHOULD_BUILD}" >> "$GITHUB_OUTPUT"
+          echo "should_test=${SHOULD_TEST}" >> "$GITHUB_OUTPUT"
+          echo "should_docker=${SHOULD_DOCKER}" >> "$GITHUB_OUTPUT"
+          echo "docs_only=${DOCS_ONLY}" >> "$GITHUB_OUTPUT"
+
+          echo "## Preflight Gate" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Check | Result |" >> "$GITHUB_STEP_SUMMARY"
+          echo "|-------|--------|" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Source changed | ${SRC} |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Docs only | ${DOCS_ONLY} |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Should build | ${SHOULD_BUILD} |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Should test | ${SHOULD_TEST} |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Should docker | ${SHOULD_DOCKER} |" >> "$GITHUB_STEP_SUMMARY"
+
+  # Lint runs in parallel with gate (doesn't depend on change detection for itself)
+  lint:
+    name: lint
+    if: inputs.run-lint
+    needs: [changes]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      checks: write
+      contents: read
+    steps:
+      - name: checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
+        with:
+          fetch-depth: 1
+      - name: set-aqua-policy-if-file-exists
+        run: |
+          if [ -f aqua-policy.yaml ]; then
+            echo "AQUA_POLICY_CONFIG=${GITHUB_WORKSPACE}/aqua-policy.yaml:${AQUA_POLICY_CONFIG}" >> "$GITHUB_ENV"
+          fi
+      - name: cache-aqua
+        uses: actions/cache@5a3ec84eff668545956fd18022155c47e93e2684 # v4
+        with:
+          path: |
+            ~/.local/share/aquaproj-aqua
+          key: aqua-lint-${{ runner.os }}-${{ hashFiles('aqua.yaml', '.aqua.yaml', 'aqua/*.yaml') }}
+          restore-keys: |
+            aqua-lint-${{ runner.os }}-
+      - uses: aquaproj/aqua-installer@5e54e5cee8a95ee2ce7c04cb993da6dfad13e59c # v3.1.2
+        continue-on-error: true
+        with:
+          aqua_version: v2.53.3
+          enable_aqua_install: true
+          aqua_opts: '--tags lint'
+        env:
+          AQUA_LOG_LEVEL: debug
+      - name: trunk-check
+        uses: trunk-io/trunk-action@75699af9e26881e564e9d832ef7dc3af25ec031b # v1.2.4
+        with:
+          arguments: --github-annotate-new-only=true
+
+  # Secret scanning runs fast and in parallel
+  secrets:
+    name: secret-scan
+    if: inputs.run-security
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - name: checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
+        with:
+          fetch-depth: 0
+      - name: gitleaks
+        uses: gitleaks/gitleaks-action@ff98106e4c7b2bc287b24eaf42907196e88e9c30 # v2
+        env:
+          GITHUB_TOKEN: ${{ github.token }}

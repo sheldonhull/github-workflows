@@ -1,0 +1,45 @@
+---
+name: skip-duplicates
+on:
+  workflow_call:
+    inputs:
+      paths-ignore:
+        description: >
+          JSON array of path patterns to ignore when detecting duplicates.
+          Runs matching only these paths will be skipped.
+        required: false
+        type: string
+        default: '[]'
+      cancel-others:
+        description: Cancel other in-progress runs for the same branch/PR
+        required: false
+        type: boolean
+        default: true
+      skip-after-successful:
+        description: Skip if a successful run exists for the same tree hash
+        required: false
+        type: boolean
+        default: true
+    outputs:
+      should-skip:
+        description: Whether the calling workflow should skip its jobs
+        value: ${{ jobs.check.outputs.should_skip }}
+permissions:
+  contents: read
+  actions: write
+jobs:
+  check:
+    name: check-duplicates
+    runs-on: ubuntu-latest
+    timeout-minutes: 1
+    outputs:
+      should_skip: ${{ steps.skip.outputs.should_skip }}
+    steps:
+      - name: skip-duplicate-actions
+        id: skip
+        uses: fkirc/skip-duplicate-actions@f75f66ce1886f00957d99748a42c724f4330bdcf # v5
+        with:
+          cancel_others: ${{ inputs.cancel-others }}
+          skip_after_successful_duplicate: ${{ inputs.skip-after-successful }}
+          paths_ignore: ${{ inputs.paths-ignore }}
+          do_not_skip: '["workflow_dispatch", "schedule"]'

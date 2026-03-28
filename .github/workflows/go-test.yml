@@ -1,0 +1,103 @@
+---
+name: go-test
+on:
+  workflow_call:
+    inputs:
+      go-version:
+        description: Go version to use (e.g. '1.22', 'stable')
+        required: false
+        type: string
+        default: stable
+      go-version-file:
+        description: Path to go.mod or .go-version for version detection
+        required: false
+        type: string
+        default: go.mod
+      working-directory:
+        description: Working directory for go commands
+        required: false
+        type: string
+        default: '.'
+      build-tags:
+        description: Build tags to pass to go test
+        required: false
+        type: string
+        default: ''
+      test-flags:
+        description: Additional flags for go test (e.g. -race -count=1)
+        required: false
+        type: string
+        default: '-race -count=1 -shuffle=on'
+      run-build:
+        description: Whether to run go build validation
+        required: false
+        type: boolean
+        default: true
+      run-vet:
+        description: Whether to run go vet
+        required: false
+        type: boolean
+        default: true
+      timeout-minutes:
+        description: Job timeout in minutes
+        required: false
+        type: number
+        default: 10
+concurrency:
+  group: go-test-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+permissions:
+  contents: read
+jobs:
+  test:
+    name: go-test
+    runs-on: ubuntu-latest
+    timeout-minutes: ${{ inputs.timeout-minutes }}
+    steps:
+      - name: checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
+        with:
+          fetch-depth: 1
+      - name: setup-go
+        uses: actions/setup-go@d35c59abb061a4a6fb18e82ac0862c26744d6ab5 # v5
+        with:
+          go-version: ${{ inputs.go-version }}
+          go-version-file: ${{ inputs.go-version-file }}
+          cache: true
+          cache-dependency-path: ${{ inputs.working-directory }}/go.sum
+      - name: go-mod-download
+        working-directory: ${{ inputs.working-directory }}
+        run: go mod download
+      - name: go-vet
+        if: inputs.run-vet
+        working-directory: ${{ inputs.working-directory }}
+        run: |
+          tags=""
+          if [ -n "${{ inputs.build-tags }}" ]; then
+            tags="-tags ${{ inputs.build-tags }}"
+          fi
+          go vet ${tags} ./...
+      - name: go-build
+        if: inputs.run-build
+        working-directory: ${{ inputs.working-directory }}
+        run: |
+          tags=""
+          if [ -n "${{ inputs.build-tags }}" ]; then
+            tags="-tags ${{ inputs.build-tags }}"
+          fi
+          go build ${tags} ./...
+      - name: go-test
+        working-directory: ${{ inputs.working-directory }}
+        run: |
+          tags=""
+          if [ -n "${{ inputs.build-tags }}" ]; then
+            tags="-tags ${{ inputs.build-tags }}"
+          fi
+          go test ${tags} ${{ inputs.test-flags }} ./...
+      - name: summary
+        if: always()
+        run: |
+          echo "## Go Test Results" >> "$GITHUB_STEP_SUMMARY"
+          echo "- **Go Version:** $(go version)" >> "$GITHUB_STEP_SUMMARY"
+          echo "- **Working Dir:** ${{ inputs.working-directory }}" >> "$GITHUB_STEP_SUMMARY"
+          echo "- **Test Flags:** ${{ inputs.test-flags }}" >> "$GITHUB_STEP_SUMMARY"

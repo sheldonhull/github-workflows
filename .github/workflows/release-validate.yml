@@ -1,0 +1,114 @@
+---
+name: release-validate
+on:
+  workflow_call:
+    inputs:
+      validate-tag-format:
+        description: Regex pattern for valid tag format (e.g. 'v[0-9]+\.[0-9]+\.[0-9]+')
+        required: false
+        type: string
+        default: '^v[0-9]+\.[0-9]+\.[0-9]+(-[a-zA-Z0-9.]+)?$'
+      require-changelog:
+        description: Whether to require a CHANGELOG entry
+        required: false
+        type: boolean
+        default: false
+      changelog-file:
+        description: Path to changelog file
+        required: false
+        type: string
+        default: CHANGELOG.md
+      require-clean-branch:
+        description: Whether the branch must have no uncommitted changes
+        required: false
+        type: boolean
+        default: true
+      go-project:
+        description: Validate as a Go project (check go.mod version, run go build)
+        required: false
+        type: boolean
+        default: false
+    outputs:
+      version:
+        description: The extracted version from tag or ref
+        value: ${{ jobs.validate.outputs.version }}
+      is-prerelease:
+        description: Whether this is a prerelease version
+        value: ${{ jobs.validate.outputs.is_prerelease }}
+concurrency:
+  group: release-validate-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+permissions:
+  contents: read
+jobs:
+  validate:
+    name: release-validate
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      is_prerelease: ${{ steps.version.outputs.is_prerelease }}
+    steps:
+      - name: checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
+        with:
+          fetch-depth: 0
+      - name: extract-version
+        id: version
+        run: |
+          # Extract version from tag or ref
+          if [[ "${{ github.ref_type }}" == "tag" ]]; then
+            VERSION="${{ github.ref_name }}"
+          else
+            VERSION="${{ github.sha }}"
+          fi
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+
+          # Check for prerelease
+          if [[ "${VERSION}" =~ -[a-zA-Z] ]]; then
+            echo "is_prerelease=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "is_prerelease=false" >> "$GITHUB_OUTPUT"
+          fi
+          echo "## Release Version" >> "$GITHUB_STEP_SUMMARY"
+          echo "- **Version:** ${VERSION}" >> "$GITHUB_STEP_SUMMARY"
+      - name: validate-tag-format
+        if: github.ref_type == 'tag'
+        run: |
+          TAG="${{ github.ref_name }}"
+          PATTERN="${{ inputs.validate-tag-format }}"
+          if ! echo "${TAG}" | grep -qE "${PATTERN}"; then
+            echo "::error::Tag '${TAG}' does not match required format: ${PATTERN}"
+            exit 1
+          fi
+          echo "Tag format validated: ${TAG}"
+      - name: check-changelog
+        if: inputs.require-changelog
+        run: |
+          if [ ! -f "${{ inputs.changelog-file }}" ]; then
+            echo "::error::Changelog file ${{ inputs.changelog-file }} not found"
+            exit 1
+          fi
+          VERSION="${{ steps.version.outputs.version }}"
+          # Strip leading v for changelog lookup
+          SEMVER="${VERSION#v}"
+          if ! grep -q "${SEMVER}" "${{ inputs.changelog-file }}"; then
+            echo "::warning::Version ${SEMVER} not found in ${{ inputs.changelog-file }}"
+          fi
+      - name: check-clean-branch
+        if: inputs.require-clean-branch
+        run: |
+          if [ -n "$(git status --porcelain)" ]; then
+            echo "::error::Working directory has uncommitted changes"
+            git status --short
+            exit 1
+          fi
+      - name: validate-go-project
+        if: inputs.go-project
+        run: |
+          if [ ! -f go.mod ]; then
+            echo "::error::go.mod not found"
+            exit 1
+          fi
+          go build ./...
+          echo "Go build validated successfully"

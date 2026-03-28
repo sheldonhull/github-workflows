@@ -1,0 +1,118 @@
+---
+name: docker-build
+on:
+  workflow_call:
+    inputs:
+      registry:
+        description: Container registry (e.g. ghcr.io, docker.io)
+        required: false
+        type: string
+        default: ghcr.io
+      image-name:
+        description: Image name (defaults to repo name)
+        required: false
+        type: string
+        default: ${{ github.repository }}
+      dockerfile:
+        description: Path to Dockerfile
+        required: false
+        type: string
+        default: Dockerfile
+      context:
+        description: Docker build context
+        required: false
+        type: string
+        default: '.'
+      build-args:
+        description: Newline-separated build args
+        required: false
+        type: string
+        default: ''
+      platforms:
+        description: Target platforms (e.g. linux/amd64,linux/arm64)
+        required: false
+        type: string
+        default: linux/amd64
+      push:
+        description: Whether to push the built image
+        required: false
+        type: boolean
+        default: false
+      cache-mode:
+        description: Cache mode - gha (GitHub Actions cache) or registry (inline)
+        required: false
+        type: string
+        default: gha
+      timeout-minutes:
+        description: Job timeout in minutes
+        required: false
+        type: number
+        default: 15
+    outputs:
+      image-digest:
+        description: The built image digest
+        value: ${{ jobs.build.outputs.digest }}
+      image-tags:
+        description: The applied image tags
+        value: ${{ jobs.build.outputs.tags }}
+concurrency:
+  group: docker-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+permissions:
+  contents: read
+  packages: write
+jobs:
+  build:
+    name: docker-build
+    runs-on: ubuntu-latest
+    timeout-minutes: ${{ inputs.timeout-minutes }}
+    outputs:
+      digest: ${{ steps.build-push.outputs.digest }}
+      tags: ${{ steps.meta.outputs.tags }}
+    steps:
+      - name: checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
+        with:
+          fetch-depth: 1
+      - name: setup-buildx
+        uses: docker/setup-buildx-action@b5ca514318bd6ebac0fb2aedd5d36ec1b5c232a2 # v3
+      - name: login-registry
+        if: inputs.push
+        uses: docker/login-action@74a5d142397b4f367a81961eba4e8cd7edddf772 # v3
+        with:
+          registry: ${{ inputs.registry }}
+          username: ${{ github.actor }}
+          password: ${{ github.token }}
+      - name: docker-metadata
+        id: meta
+        uses: docker/metadata-action@902fa8ec7d6ecbf8d84d538b9b233a880e428804 # v5
+        with:
+          images: ${{ inputs.registry }}/${{ inputs.image-name }}
+          tags: |
+            type=ref,event=branch
+            type=ref,event=pr
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=sha,prefix=
+      - name: build-and-push
+        id: build-push
+        uses: docker/build-push-action@14487ce63c7a62a4a324b0bfb37086795e31c6c1 # v6
+        with:
+          context: ${{ inputs.context }}
+          file: ${{ inputs.dockerfile }}
+          platforms: ${{ inputs.platforms }}
+          push: ${{ inputs.push }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          build-args: ${{ inputs.build-args }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+      - name: summary
+        run: |
+          echo "## Docker Build" >> "$GITHUB_STEP_SUMMARY"
+          echo "- **Image:** ${{ inputs.registry }}/${{ inputs.image-name }}" >> "$GITHUB_STEP_SUMMARY"
+          echo "- **Digest:** ${{ steps.build-push.outputs.digest }}" >> "$GITHUB_STEP_SUMMARY"
+          echo "- **Tags:**" >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+          echo "${{ steps.meta.outputs.tags }}" >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
